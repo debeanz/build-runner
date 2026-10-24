@@ -1,0 +1,43 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unpack
+        env:
+          KEY: ${{ secrets.BUNDLE_KEY }}
+        run: |
+          OPENSSL="$(brew --prefix openssl@3)/bin/openssl"
+          mkdir src
+          cat payload/bundle.part-* | "$OPENSSL" enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:KEY | tar -xz -C src
+
+      - name: Build
+        run: QUIET=1 bash src/ci/build-ipa.sh "$PWD/out"
+
+      - name: Encrypt results
+        if: always()
+        env:
+          KEY: ${{ secrets.BUNDLE_KEY }}
+        run: |
+          OPENSSL="$(brew --prefix openssl@3)/bin/openssl"
+          mkdir -p enc
+          for f in out/Socket.ipa out/build.log; do
+            [ -f "$f" ] && "$OPENSSL" enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:KEY -in "$f" -out "enc/$(basename "$f").enc"
+          done
+          rm -rf out src
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: result
+          path: enc/
+          retention-days: 3
